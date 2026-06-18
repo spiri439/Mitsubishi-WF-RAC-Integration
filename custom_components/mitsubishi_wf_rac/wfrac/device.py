@@ -77,6 +77,13 @@ class Device(DataUpdateCoordinator):  # pylint: disable=too-many-instance-attrib
             _LOGGER.warning(
                 "Error: something went wrong updating the airco [%s] values", self.device_name
             )
+            # The WF-RAC module keeps only a small, fixed-size table of registered
+            # accounts (operator ids). Opening the official app or adding phones can
+            # silently evict Home Assistant from that table, after which polls fail
+            # until the integration is reloaded. Proactively re-register our account
+            # on failure so we recover automatically on the next poll if we were
+            # evicted. add_account() is self-contained and swallows its own errors.
+            await self.add_account()
             return
 
         try:
@@ -212,7 +219,11 @@ class Device(DataUpdateCoordinator):  # pylint: disable=too-many-instance-attrib
     async def _async_update_data(self):
         """Update data via library."""
         try:
-            async with timeout(10):
+            # Match the underlying HTTP request timeout (30s). The WF-RAC adapter
+            # is slow/flaky and frequently answers in 10-20s; a tighter coordinator
+            # timeout here would cancel slow-but-valid polls and mark the entity
+            # unavailable even though the unit was about to respond.
+            async with timeout(30):
                 await asyncio.gather(*[self.update()])
         except Exception as error:
             raise UpdateFailed(error) from error
